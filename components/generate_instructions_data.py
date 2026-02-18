@@ -78,9 +78,9 @@ def prepare_instruction_data(
     )
 
     templates = [
-        ("is_pepsi", ["TITLE", "PRODUCT_CODE", "IS_PEPSI_PRODUCT", "REPORTING_UPC", "TRADEMARK"],
-         lambda r: f"Is {product_name(r)} a Pepsi product?",
-         lambda r: f"{yes_no(r.get('IS_PEPSI_PRODUCT'))}." if yes_no(r.get("IS_PEPSI_PRODUCT")) else strict_unknown_text),
+        ("is_demosi", ["TITLE", "PRODUCT_CODE", "IS_demoSI_PRODUCT", "REPORTING_UPC", "TRADEMARK"],
+         lambda r: f"Is {product_name(r)} a demosi product?",
+         lambda r: f"{yes_no(r.get('IS_demoSI_PRODUCT'))}." if yes_no(r.get("IS_demoSI_PRODUCT")) else strict_unknown_text),
         ("reporting_upc", ["TITLE", "PRODUCT_CODE", "PRODUCT_CODE_TYPE", "REPORTING_UPC"],
          lambda r: f"What is the reporting UPC for {product_name(r)}?",
          lambda r: f"The reporting UPC is {safe(r, 'REPORTING_UPC')}." if normalize(r.get("REPORTING_UPC")) else strict_unknown_text),
