@@ -1,0 +1,60 @@
+apiVersion: serving.kserve.io/v1beta1
+kind: InferenceService
+metadata:
+  name: qwen-csv-qa
+  namespace: mlops
+spec:
+  predictor:
+    model:
+      runtime: kserve-huggingfaceserver
+      modelFormat:
+        name: huggingface
+      storageUri: pvc://model-store-pvc/qwen-csv-qa/v1/serving-model
+      resources:
+        requests:
+          cpu: "4"
+          memory: 16Gi
+          nvidia.com/gpu: "1"
+        limits:
+          cpu: "8"
+          memory: 24Gi
+          nvidia.com/gpu: "1"
+    nodeSelector:
+      agentpool: gpuac3d
+      kubernetes.azure.com/accelerator: nvidia
+    tolerations:
+      - key: type
+        operator: Equal
+        value: gpu
+        effect: NoSchedule
+    containers:
+      - name: request-logger
+        image: python:3.11-slim
+        command:
+          - /bin/sh
+          - -c
+          - pip install --no-cache-dir flask requests && python /app/request_logger.py
+        env:
+          - name: TARGET_URL
+            value: http://127.0.0.1:8080/v1/models/qwen-csv-qa:predict
+          - name: LOG_DIR
+            value: /mnt/models/qwen-csv-qa/prod-logs
+          - name: LOG_FILE
+            value: inference.jsonl
+          - name: TIMEOUT_SEC
+            value: "60"
+        ports:
+          - containerPort: 8081
+            name: logger-http
+        volumeMounts:
+          - name: model-store
+            mountPath: /mnt/models
+          - name: logger-app
+            mountPath: /app
+    volumes:
+      - name: model-store
+        persistentVolumeClaim:
+          claimName: model-store-pvc
+      - name: logger-app
+        configMap:
+          name: qwen-request-logger-code
