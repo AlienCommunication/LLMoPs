@@ -1,0 +1,29 @@
+apiVersion: serving.kserve.io/v1beta1
+kind: InferenceService
+metadata:
+  name: qwen-csv-qa
+  namespace: mlops
+spec:
+  predictor:
+    model:
+      runtime: kserve-huggingfaceserver
+      modelFormat:
+        name: huggingface
+      storageUri: pvc://model-store-pvc/qwen-csv-qa/v1/adapter/final
+      resources:
+        requests:
+          cpu: "4"
+          memory: 16Gi
+          nvidia.com/gpu: "1"
+        limits:
+          cpu: "8"
+          memory: 24Gi
+          nvidia.com/gpu: "1"
+    nodeSelector:
+      agentpool: gpuac3d
+      kubernetes.azure.com/accelerator: nvidia
+    tolerations:
+      - key: type
+        operator: Equal
+        value: gpu
+        effect: NoSchedule

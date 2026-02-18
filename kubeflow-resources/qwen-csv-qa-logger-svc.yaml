@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: qwen-csv-qa-logger
+  namespace: mlops
+spec:
+  selector:
+    serving.kserve.io/inferenceservice: qwen-csv-qa
+    component: predictor
+  ports:
+    - name: http-logger
+      protocol: TCP
+      port: 80
+      targetPort: 8081
+  type: ClusterIP

@@ -1,0 +1,1030 @@
+# PIPELINE DEFINITION
+# Name: qwen-csv-qa-train-and-serve-v2
+# Description: Generate instruction data, fine-tune Qwen LoRA on GPU, and deploy to KServe endpoint.
+# Inputs:
+#    batch_size: int [Default: 1.0]
+#    csv_path: str [Default: '/mnt/models/data/LimeSpark Phase2_2026-01-23-1416.csv']
+#    data_version: str [Default: 'd2026-02-13']
+#    deploy_enabled: bool [Default: True]
+#    epochs: int [Default: 1.0]
+#    grad_acc: int [Default: 8.0]
+#    lr: float [Default: 0.0001]
+#    max_seq_len: int [Default: 512.0]
+#    model_id: str [Default: 'Qwen/Qwen2.5-1.5B-Instruct']
+#    model_name: str [Default: 'qwen-csv-qa']
+#    model_version: str [Default: 'v1']
+#    namespace: str [Default: 'mlops']
+#    pvc_name: str [Default: 'model-store-pvc']
+#    registry_server: str [Default: 'http://model-registry-service.kubeflow.svc.cluster.local:8080']
+#    seed: int [Default: 42.0]
+#    target_rows: int [Default: 5000.0]
+#    val_ratio: float [Default: 0.1]
+components:
+  comp-condition-1:
+    dag:
+      tasks:
+        deploy-inferenceservice:
+          cachingOptions: {}
+          componentRef:
+            name: comp-deploy-inferenceservice
+          inputs:
+            parameters:
+              cpu_limit:
+                runtimeValue:
+                  constant: '8'
+              cpu_request:
+                runtimeValue:
+                  constant: '4'
+              mem_limit:
+                runtimeValue:
+                  constant: 24Gi
+              mem_request:
+                runtimeValue:
+                  constant: 16Gi
+              model_name:
+                componentInputParameter: pipelinechannel--model_name
+              namespace:
+                componentInputParameter: pipelinechannel--namespace
+              pipelinechannel--model_name:
+                componentInputParameter: pipelinechannel--model_name
+              pipelinechannel--model_version:
+                componentInputParameter: pipelinechannel--model_version
+              pipelinechannel--pvc_name:
+                componentInputParameter: pipelinechannel--pvc_name
+              runtime_name:
+                runtimeValue:
+                  constant: kserve-huggingfaceserver
+              storage_uri:
+                runtimeValue:
+                  constant: pvc://{{$.inputs.parameters['pipelinechannel--pvc_name']}}/{{$.inputs.parameters['pipelinechannel--model_name']}}/{{$.inputs.parameters['pipelinechannel--model_version']}}/serving-model
+          taskInfo:
+            name: deploy-inferenceservice
+    inputDefinitions:
+      parameters:
+        pipelinechannel--deploy_enabled:
+          parameterType: BOOLEAN
+        pipelinechannel--model_name:
+          parameterType: STRING
+        pipelinechannel--model_version:
+          parameterType: STRING
+        pipelinechannel--namespace:
+          parameterType: STRING
+        pipelinechannel--pvc_name:
+          parameterType: STRING
+  comp-deploy-inferenceservice:
+    executorLabel: exec-deploy-inferenceservice
+    inputDefinitions:
+      parameters:
+        cpu_limit:
+          parameterType: STRING
+        cpu_request:
+          parameterType: STRING
+        mem_limit:
+          parameterType: STRING
+        mem_request:
+          parameterType: STRING
+        model_name:
+          parameterType: STRING
+        namespace:
+          parameterType: STRING
+        runtime_name:
+          parameterType: STRING
+        storage_uri:
+          parameterType: STRING
+    outputDefinitions:
+      parameters:
+        deploy_status_out:
+          parameterType: STRING
+        manifest_out:
+          parameterType: STRING
+  comp-evaluate-dataset-only:
+    executorLabel: exec-evaluate-dataset-only
+    inputDefinitions:
+      parameters:
+        val_jsonl:
+          parameterType: STRING
+    outputDefinitions:
+      parameters:
+        eval_out:
+          parameterType: STRING
+  comp-fine-tune-lora:
+    executorLabel: exec-fine-tune-lora
+    inputDefinitions:
+      parameters:
+        adapter_output_dir:
+          parameterType: STRING
+        batch_size:
+          parameterType: NUMBER_INTEGER
+        epochs:
+          parameterType: NUMBER_INTEGER
+        grad_acc:
+          parameterType: NUMBER_INTEGER
+        lr:
+          parameterType: NUMBER_DOUBLE
+        max_seq_len:
+          parameterType: NUMBER_INTEGER
+        model_id:
+          parameterType: STRING
+        train_jsonl:
+          parameterType: STRING
+        val_jsonl:
+          parameterType: STRING
+    outputDefinitions:
+      parameters:
+        metrics_out:
+          parameterType: STRING
+  comp-merge-for-serving:
+    executorLabel: exec-merge-for-serving
+    inputDefinitions:
+      parameters:
+        adapter_dir:
+          parameterType: STRING
+        base_model_id:
+          parameterType: STRING
+        merged_output_dir:
+          parameterType: STRING
+    outputDefinitions:
+      parameters:
+        merged_path_out:
+          parameterType: STRING
+  comp-prepare-instruction-data:
+    executorLabel: exec-prepare-instruction-data
+    inputDefinitions:
+      parameters:
+        csv_path:
+          parameterType: STRING
+        output_dir:
+          parameterType: STRING
+        seed:
+          parameterType: NUMBER_INTEGER
+        target_rows:
+          parameterType: NUMBER_INTEGER
+        val_ratio:
+          parameterType: NUMBER_DOUBLE
+    outputDefinitions:
+      parameters:
+        metadata_out:
+          parameterType: STRING
+        train_jsonl_out:
+          parameterType: STRING
+        val_jsonl_out:
+          parameterType: STRING
+  comp-register-model-version:
+    executorLabel: exec-register-model-version
+    inputDefinitions:
+      parameters:
+        description:
+          parameterType: STRING
+        model_id:
+          parameterType: STRING
+        model_name:
+          parameterType: STRING
+        model_version:
+          parameterType: STRING
+        registry_server:
+          parameterType: STRING
+        storage_uri:
+          parameterType: STRING
+    outputDefinitions:
+      parameters:
+        registration_out:
+          parameterType: STRING
+deploymentSpec:
+  executors:
+    exec-deploy-inferenceservice:
+      container:
+        args:
+        - --executor_input
+        - '{{$}}'
+        - --function_to_execute
+        - deploy_inferenceservice
+        command:
+        - sh
+        - -c
+        - "\nif ! [ -x \"$(command -v pip)\" ]; then\n    python3 -m ensurepip ||\
+          \ python3 -m ensurepip --user || apt-get install python3-pip\nfi\n\nPIP_DISABLE_PIP_VERSION_CHECK=1\
+          \ python3 -m pip install --quiet --no-warn-script-location 'kubernetes'\
+          \ 'PyYAML'  &&  python3 -m pip install --quiet --no-warn-script-location\
+          \ 'kfp==2.14.6' '--no-deps' 'typing-extensions>=3.7.4,<5; python_version<\"\
+          3.9\"' && \"$0\" \"$@\"\n"
+        - sh
+        - -ec
+        - 'program_path=$(mktemp -d)
+
+
+          printf "%s" "$0" > "$program_path/ephemeral_component.py"
+
+          _KFP_RUNTIME=true python3 -m kfp.dsl.executor_main                         --component_module_path                         "$program_path/ephemeral_component.py"                         "$@"
+
+          '
+        - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
+          \ *\n\ndef deploy_inferenceservice(\n    model_name: str,\n    namespace:\
+          \ str,\n    storage_uri: str,\n    runtime_name: str,\n    cpu_request:\
+          \ str,\n    cpu_limit: str,\n    mem_request: str,\n    mem_limit: str,\n\
+          \    manifest_out: dsl.OutputPath(str),\n    deploy_status_out: dsl.OutputPath(str),\n\
+          ):\n    import json\n    import time\n    from pathlib import Path\n\n \
+          \   import yaml\n    from kubernetes import client, config\n\n    manifest\
+          \ = {\n        \"apiVersion\": \"serving.kserve.io/v1beta1\",\n        \"\
+          kind\": \"InferenceService\",\n        \"metadata\": {\"name\": model_name,\
+          \ \"namespace\": namespace},\n        \"spec\": {\n            \"predictor\"\
+          : {\n                \"model\": {\n                    \"runtime\": runtime_name,\n\
+          \                    \"modelFormat\": {\"name\": \"huggingface\"},\n   \
+          \                 \"storageUri\": storage_uri,\n                    \"resources\"\
+          : {\n                        \"requests\": {\"cpu\": cpu_request, \"memory\"\
+          : mem_request, \"nvidia.com/gpu\": \"1\"},\n                        \"limits\"\
+          : {\"cpu\": cpu_limit, \"memory\": mem_limit, \"nvidia.com/gpu\": \"1\"\
+          },\n                    },\n                },\n                \"nodeSelector\"\
+          : {\n                    \"agentpool\": \"gpuac3d\",\n                 \
+          \   \"kubernetes.azure.com/accelerator\": \"nvidia\",\n                },\n\
+          \                \"tolerations\": [{\"key\": \"type\", \"operator\": \"\
+          Equal\", \"value\": \"gpu\", \"effect\": \"NoSchedule\"}],\n           \
+          \ }\n        },\n    }\n\n    Path(manifest_out).write_text(yaml.safe_dump(manifest,\
+          \ sort_keys=False), encoding=\"utf-8\")\n\n    config.load_incluster_config()\n\
+          \    api = client.CustomObjectsApi()\n    group = \"serving.kserve.io\"\n\
+          \    version = \"v1beta1\"\n    plural = \"inferenceservices\"\n\n    try:\n\
+          \        api.get_namespaced_custom_object(group, version, namespace, plural,\
+          \ model_name)\n        api.patch_namespaced_custom_object(group, version,\
+          \ namespace, plural, model_name, manifest)\n    except client.exceptions.ApiException\
+          \ as e:\n        if e.status == 404:\n            api.create_namespaced_custom_object(group,\
+          \ version, namespace, plural, manifest)\n        else:\n            raise\n\
+          \n    deadline = time.time() + 1200\n    latest = None\n    while time.time()\
+          \ < deadline:\n        latest = api.get_namespaced_custom_object(group,\
+          \ version, namespace, plural, model_name)\n        conditions = latest.get(\"\
+          status\", {}).get(\"conditions\", [])\n        ready = [c for c in conditions\
+          \ if c.get(\"type\") == \"Ready\"]\n        if ready and ready[-1].get(\"\
+          status\") == \"True\":\n            Path(deploy_status_out).write_text(json.dumps(latest),\
+          \ encoding=\"utf-8\")\n            return\n        time.sleep(10)\n\n  \
+          \  raise RuntimeError(f\"InferenceService {namespace}/{model_name} did not\
+          \ become Ready in time\")\n\n"
+        image: python:3.11
+    exec-evaluate-dataset-only:
+      container:
+        args:
+        - --executor_input
+        - '{{$}}'
+        - --function_to_execute
+        - evaluate_dataset_only
+        command:
+        - sh
+        - -c
+        - "\nif ! [ -x \"$(command -v pip)\" ]; then\n    python3 -m ensurepip ||\
+          \ python3 -m ensurepip --user || apt-get install python3-pip\nfi\n\nPIP_DISABLE_PIP_VERSION_CHECK=1\
+          \ python3 -m pip install --quiet --no-warn-script-location 'kfp==2.14.6'\
+          \ '--no-deps' 'typing-extensions>=3.7.4,<5; python_version<\"3.9\"' && \"\
+          $0\" \"$@\"\n"
+        - sh
+        - -ec
+        - 'program_path=$(mktemp -d)
+
+
+          printf "%s" "$0" > "$program_path/ephemeral_component.py"
+
+          _KFP_RUNTIME=true python3 -m kfp.dsl.executor_main                         --component_module_path                         "$program_path/ephemeral_component.py"                         "$@"
+
+          '
+        - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
+          \ *\n\ndef evaluate_dataset_only(val_jsonl: str, eval_out: dsl.OutputPath(str)):\n\
+          \    import json\n    from pathlib import Path\n\n    total = 0\n    unknown\
+          \ = 0\n    bad = 0\n    with open(val_jsonl, \"r\", encoding=\"utf-8\")\
+          \ as f:\n        for line in f:\n            total += 1\n            try:\n\
+          \                row = json.loads(line)\n                if row.get(\"answer\"\
+          ) == \"Not available in provided data.\":\n                    unknown +=\
+          \ 1\n            except Exception:\n                bad += 1\n\n    metrics\
+          \ = {\n        \"val_rows\": total,\n        \"invalid_rows\": bad,\n  \
+          \      \"unknown_answer_rows\": unknown,\n        \"unknown_ratio\": (unknown\
+          \ / total) if total else 0.0,\n    }\n    Path(eval_out).write_text(json.dumps(metrics),\
+          \ encoding=\"utf-8\")\n\n"
+        image: python:3.11
+        resources:
+          cpuLimit: 4.0
+          cpuRequest: 2.0
+          memoryLimit: 8.589934592
+          memoryRequest: 4.294967296
+          resourceCpuLimit: '4'
+          resourceCpuRequest: '2'
+          resourceMemoryLimit: 8Gi
+          resourceMemoryRequest: 4Gi
+    exec-fine-tune-lora:
+      container:
+        args:
+        - --executor_input
+        - '{{$}}'
+        - --function_to_execute
+        - fine_tune_lora
+        command:
+        - sh
+        - -c
+        - "\nif ! [ -x \"$(command -v pip)\" ]; then\n    python3 -m ensurepip ||\
+          \ python3 -m ensurepip --user || apt-get install python3-pip\nfi\n\nPIP_DISABLE_PIP_VERSION_CHECK=1\
+          \ python3 -m pip install --quiet --no-warn-script-location 'transformers==4.46.3'\
+          \ 'trl==0.11.4' 'peft==0.13.2' 'accelerate==1.1.1' 'datasets==3.1.0' 'bitsandbytes'\
+          \ 'sentencepiece' 'rich'  &&  python3 -m pip install --quiet --no-warn-script-location\
+          \ 'kfp==2.14.6' '--no-deps' 'typing-extensions>=3.7.4,<5; python_version<\"\
+          3.9\"' && \"$0\" \"$@\"\n"
+        - sh
+        - -ec
+        - 'program_path=$(mktemp -d)
+
+
+          printf "%s" "$0" > "$program_path/ephemeral_component.py"
+
+          _KFP_RUNTIME=true python3 -m kfp.dsl.executor_main                         --component_module_path                         "$program_path/ephemeral_component.py"                         "$@"
+
+          '
+        - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
+          \ *\n\ndef fine_tune_lora(\n    train_jsonl: str,\n    val_jsonl: str,\n\
+          \    adapter_output_dir: str,\n    model_id: str,\n    max_seq_len: int,\n\
+          \    batch_size: int,\n    grad_acc: int,\n    lr: float,\n    epochs: int,\n\
+          \    metrics_out: dsl.OutputPath(str),\n):\n    import json\n    import\
+          \ os\n    from pathlib import Path\n\n    import torch\n    from datasets\
+          \ import Dataset\n    from huggingface_hub import login\n    from peft import\
+          \ LoraConfig\n    from transformers import AutoModelForCausalLM, AutoTokenizer,\
+          \ BitsAndBytesConfig\n    from trl import SFTConfig, SFTTrainer\n\n    os.environ[\"\
+          TRANSFORMERS_NO_TF\"] = \"1\"\n    os.environ[\"USE_TF\"] = \"0\"\n    os.environ[\"\
+          ACCELERATE_MIXED_PRECISION\"] = \"fp16\"\n    hf_token = os.getenv(\"HF_TOKEN\"\
+          ) or os.getenv(\"HUGGING_FACE_HUB_TOKEN\")\n    if hf_token:\n        login(token=hf_token)\n\
+          \n    def load_jsonl(path: str):\n        with open(path, \"r\", encoding=\"\
+          utf-8\") as f:\n            return [json.loads(line) for line in f]\n\n\
+          \    train_rows = load_jsonl(train_jsonl)\n    val_rows = load_jsonl(val_jsonl)\n\
+          \n    train_ds = Dataset.from_list(train_rows)\n    val_ds = Dataset.from_list(val_rows)\n\
+          \n    system = (\n        \"Answer using only context. If requested info\
+          \ is UNKNOWN/blank/N/A/UNASSIGNED, \"\n        \"reply exactly: 'Not available\
+          \ in provided data.'\"\n    )\n\n    def to_text(ex):\n        return {\n\
+          \            \"text\": (\n                f\"System: {system}\\\\n\"\n \
+          \               f\"User: Question: {ex['instruction']}\\\\n\"\n        \
+          \        f\"Context: {json.dumps(ex['context'], ensure_ascii=False)}\\\\\
+          n\"\n                f\"Assistant: {ex['answer']}\"\n            )\n   \
+          \     }\n\n    train_ds = train_ds.map(to_text, remove_columns=train_ds.column_names)\n\
+          \    val_ds = val_ds.map(to_text, remove_columns=val_ds.column_names)\n\n\
+          \    tokenizer = AutoTokenizer.from_pretrained(model_id, use_fast=True,\
+          \ trust_remote_code=True)\n    if tokenizer.pad_token is None:\n       \
+          \ tokenizer.pad_token = tokenizer.eos_token\n\n    use_4bit = True\n   \
+          \ try:\n        bnb = BitsAndBytesConfig(\n            load_in_4bit=True,\n\
+          \            bnb_4bit_quant_type=\"nf4\",\n            bnb_4bit_compute_dtype=torch.float16,\n\
+          \        )\n        model = AutoModelForCausalLM.from_pretrained(\n    \
+          \        model_id,\n            quantization_config=bnb,\n            device_map=\"\
+          auto\",\n            torch_dtype=torch.float16,\n            trust_remote_code=True,\n\
+          \        )\n    except Exception as e:\n        print(f\"[WARN] 4-bit loading\
+          \ failed; falling back to fp16 model load. Error: {e}\")\n        use_4bit\
+          \ = False\n        model = AutoModelForCausalLM.from_pretrained(\n     \
+          \       model_id,\n            device_map=\"auto\",\n            torch_dtype=torch.float16,\n\
+          \            trust_remote_code=True,\n        )\n\n    model.config.use_cache\
+          \ = False\n\n    peft_config = LoraConfig(\n        r=8,\n        lora_alpha=16,\n\
+          \        lora_dropout=0.05,\n        bias=\"none\",\n        task_type=\"\
+          CAUSAL_LM\",\n        target_modules=[\"q_proj\", \"k_proj\", \"v_proj\"\
+          , \"o_proj\", \"gate_proj\", \"up_proj\", \"down_proj\"],\n    )\n\n   \
+          \ out = Path(adapter_output_dir)\n    out.mkdir(parents=True, exist_ok=True)\n\
+          \n    sft_config = SFTConfig(\n        output_dir=str(out / \"workdir\"\
+          ),\n        num_train_epochs=epochs,\n        per_device_train_batch_size=batch_size,\n\
+          \        per_device_eval_batch_size=1,\n        gradient_accumulation_steps=grad_acc,\n\
+          \        learning_rate=lr,\n        logging_steps=20,\n        eval_steps=100,\n\
+          \        save_steps=100,\n        fp16=True,\n        bf16=False,\n    \
+          \    max_seq_length=max_seq_len,\n        packing=False,\n        dataset_text_field=\"\
+          text\",\n        gradient_checkpointing=True,\n        report_to=\"none\"\
+          ,\n        optim=(\"paged_adamw_8bit\" if use_4bit else \"adamw_torch\"\
+          ),\n    )\n\n    trainer = SFTTrainer(\n        model=model,\n        tokenizer=tokenizer,\n\
+          \        train_dataset=train_ds,\n        eval_dataset=val_ds,\n       \
+          \ peft_config=peft_config,\n        args=sft_config,\n    )\n\n    train_output\
+          \ = trainer.train()\n\n    final_dir = out / \"final\"\n    trainer.model.save_pretrained(str(final_dir))\n\
+          \    tokenizer.save_pretrained(str(final_dir))\n\n    metrics = {\n    \
+          \    \"train_loss\": float(train_output.training_loss),\n        \"train_samples\"\
+          : len(train_rows),\n        \"val_samples\": len(val_rows),\n        \"\
+          model_id\": model_id,\n        \"adapter_path\": str(final_dir),\n    }\n\
+          \    Path(metrics_out).write_text(json.dumps(metrics), encoding=\"utf-8\"\
+          )\n\n"
+        image: python:3.11
+        resources:
+          accelerator:
+            count: '1'
+            resourceCount: '1'
+            resourceType: nvidia.com/gpu
+            type: nvidia.com/gpu
+          cpuLimit: 12.0
+          cpuRequest: 8.0
+          memoryLimit: 68.719476736
+          memoryRequest: 51.539607552
+          resourceCpuLimit: '12'
+          resourceCpuRequest: '8'
+          resourceMemoryLimit: 64Gi
+          resourceMemoryRequest: 48Gi
+    exec-merge-for-serving:
+      container:
+        args:
+        - --executor_input
+        - '{{$}}'
+        - --function_to_execute
+        - merge_for_serving
+        command:
+        - sh
+        - -c
+        - "\nif ! [ -x \"$(command -v pip)\" ]; then\n    python3 -m ensurepip ||\
+          \ python3 -m ensurepip --user || apt-get install python3-pip\nfi\n\nPIP_DISABLE_PIP_VERSION_CHECK=1\
+          \ python3 -m pip install --quiet --no-warn-script-location 'transformers==4.46.3'\
+          \ 'peft==0.13.2' 'accelerate==1.1.1' 'sentencepiece'  &&  python3 -m pip\
+          \ install --quiet --no-warn-script-location 'kfp==2.14.6' '--no-deps' 'typing-extensions>=3.7.4,<5;\
+          \ python_version<\"3.9\"' && \"$0\" \"$@\"\n"
+        - sh
+        - -ec
+        - 'program_path=$(mktemp -d)
+
+
+          printf "%s" "$0" > "$program_path/ephemeral_component.py"
+
+          _KFP_RUNTIME=true python3 -m kfp.dsl.executor_main                         --component_module_path                         "$program_path/ephemeral_component.py"                         "$@"
+
+          '
+        - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
+          \ *\n\ndef merge_for_serving(\n    base_model_id: str,\n    adapter_dir:\
+          \ str,\n    merged_output_dir: str,\n    merged_path_out: dsl.OutputPath(str),\n\
+          ):\n    import os\n    from pathlib import Path\n\n    import torch\n  \
+          \  from huggingface_hub import login\n    from peft import PeftModel\n \
+          \   from transformers import AutoModelForCausalLM, AutoTokenizer\n\n   \
+          \ os.environ[\"TRANSFORMERS_NO_TF\"] = \"1\"\n    os.environ[\"USE_TF\"\
+          ] = \"0\"\n\n    hf_token = os.getenv(\"HF_TOKEN\") or os.getenv(\"HUGGING_FACE_HUB_TOKEN\"\
+          )\n    if hf_token:\n        login(token=hf_token)\n\n    out_dir = Path(merged_output_dir)\n\
+          \    out_dir.mkdir(parents=True, exist_ok=True)\n\n    tokenizer = AutoTokenizer.from_pretrained(base_model_id,\
+          \ trust_remote_code=True)\n\n    max_memory = None\n    if torch.cuda.is_available():\n\
+          \        total = torch.cuda.get_device_properties(0).total_memory\n    \
+          \    usable = int(total * 0.85)\n        max_memory = {0: usable, \"cpu\"\
+          : \"32GiB\"}\n\n    base_model = AutoModelForCausalLM.from_pretrained(\n\
+          \        base_model_id,\n        torch_dtype=torch.float16,\n        trust_remote_code=True,\n\
+          \        device_map=\"auto\",\n        max_memory=max_memory,\n    )\n\n\
+          \    peft_model = PeftModel.from_pretrained(base_model, adapter_dir)\n \
+          \   merged_model = peft_model.merge_and_unload()\n\n    merged_model.save_pretrained(str(out_dir))\n\
+          \    tokenizer.save_pretrained(str(out_dir))\n\n    Path(merged_path_out).write_text(str(out_dir),\
+          \ encoding=\"utf-8\")\n\n"
+        image: python:3.11
+        resources:
+          accelerator:
+            count: '1'
+            resourceCount: '1'
+            resourceType: nvidia.com/gpu
+            type: nvidia.com/gpu
+          cpuLimit: 8.0
+          cpuRequest: 4.0
+          memoryLimit: 25.769803776
+          memoryRequest: 17.179869184
+          resourceCpuLimit: '8'
+          resourceCpuRequest: '4'
+          resourceMemoryLimit: 24Gi
+          resourceMemoryRequest: 16Gi
+    exec-prepare-instruction-data:
+      container:
+        args:
+        - --executor_input
+        - '{{$}}'
+        - --function_to_execute
+        - prepare_instruction_data
+        command:
+        - sh
+        - -c
+        - "\nif ! [ -x \"$(command -v pip)\" ]; then\n    python3 -m ensurepip ||\
+          \ python3 -m ensurepip --user || apt-get install python3-pip\nfi\n\nPIP_DISABLE_PIP_VERSION_CHECK=1\
+          \ python3 -m pip install --quiet --no-warn-script-location 'kfp==2.14.6'\
+          \ '--no-deps' 'typing-extensions>=3.7.4,<5; python_version<\"3.9\"' && \"\
+          $0\" \"$@\"\n"
+        - sh
+        - -ec
+        - 'program_path=$(mktemp -d)
+
+
+          printf "%s" "$0" > "$program_path/ephemeral_component.py"
+
+          _KFP_RUNTIME=true python3 -m kfp.dsl.executor_main                         --component_module_path                         "$program_path/ephemeral_component.py"                         "$@"
+
+          '
+        - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
+          \ *\n\ndef prepare_instruction_data(\n    csv_path: str,\n    output_dir:\
+          \ str,\n    target_rows: int,\n    val_ratio: float,\n    seed: int,\n \
+          \   train_jsonl_out: dsl.OutputPath(str),\n    val_jsonl_out: dsl.OutputPath(str),\n\
+          \    metadata_out: dsl.OutputPath(str),\n):\n    import csv\n    import\
+          \ json\n    import random\n    import re\n    from pathlib import Path\n\
+          \n    unknown_markers = {\"\", \"UNKNOWN\", \"N/A\", \"NA\", \"NULL\", \"\
+          NONE\", \"UNASSIGNED\", \"Unknown\", \"unknown\"}\n    strict_unknown_text\
+          \ = \"Not available in provided data.\"\n\n    def normalize(v):\n     \
+          \   if v is None:\n            return None\n        s = str(v).strip()\n\
+          \        return None if s in unknown_markers else s\n\n    def yes_no(v):\n\
+          \        x = normalize(v)\n        if not x:\n            return None\n\
+          \        x = x.upper()\n        if x == \"TRUE\":\n            return \"\
+          Yes\"\n        if x == \"FALSE\":\n            return \"No\"\n        return\
+          \ None\n\n    def title_ok(t):\n        if not t:\n            return False\n\
+          \        t = t.strip()\n        if t.upper() in {\"UNKNOWN\", \"N/A\", \"\
+          UNASSIGNED\"}:\n            return False\n        if len(t) < 5:\n     \
+          \       return False\n        if t.count(\"(\") != t.count(\")\"):\n   \
+          \         return False\n        if re.search(r\"[^\\w\\s\\-\\&\\.\\,\\(\\\
+          )\\/\\+\\'\\:]\", t):\n            return False\n        return True\n\n\
+          \    def product_name(row):\n        t = row.get(\"TITLE\", \"\")\n    \
+          \    if title_ok(t):\n            return t.strip()\n        code = (row.get(\"\
+          PRODUCT_CODE\") or \"\").strip()\n        return f\"product code {code}\"\
+          \ if code else \"this product\"\n\n    def safe(row, key):\n        return\
+          \ normalize(row.get(key)) or strict_unknown_text\n\n    def write_jsonl(path:\
+          \ Path, rows):\n        path.parent.mkdir(parents=True, exist_ok=True)\n\
+          \        with path.open(\"w\", encoding=\"utf-8\") as f:\n            for\
+          \ item in rows:\n                f.write(json.dumps(item, ensure_ascii=True)\
+          \ + \"\\n\")\n\n    out_dir = Path(output_dir)\n    with open(csv_path,\
+          \ \"r\", encoding=\"utf-8-sig\", newline=\"\") as f:\n        rows = list(csv.DictReader(f))\n\
+          \n    common_meta = (\n        \"Answer using only context. If requested\
+          \ info is UNKNOWN/blank/N/A/UNASSIGNED, \"\n        \"reply exactly: 'Not\
+          \ available in provided data.'\"\n    )\n\n    templates = [\n        (\"\
+          is_pepsi\", [\"TITLE\", \"PRODUCT_CODE\", \"IS_PEPSI_PRODUCT\", \"REPORTING_UPC\"\
+          , \"TRADEMARK\"],\n         lambda r: f\"Is {product_name(r)} a Pepsi product?\"\
+          ,\n         lambda r: f\"{yes_no(r.get('IS_PEPSI_PRODUCT'))}.\" if yes_no(r.get(\"\
+          IS_PEPSI_PRODUCT\")) else strict_unknown_text),\n        (\"reporting_upc\"\
+          , [\"TITLE\", \"PRODUCT_CODE\", \"PRODUCT_CODE_TYPE\", \"REPORTING_UPC\"\
+          ],\n         lambda r: f\"What is the reporting UPC for {product_name(r)}?\"\
+          ,\n         lambda r: f\"The reporting UPC is {safe(r, 'REPORTING_UPC')}.\"\
+          \ if normalize(r.get(\"REPORTING_UPC\")) else strict_unknown_text),\n  \
+          \      (\"parent_company\", [\"TITLE\", \"PRODUCT_CODE\", \"TRADEMARK\"\
+          , \"PARENT_COMPANY\"],\n         lambda r: f\"Who is the parent company\
+          \ for {product_name(r)}?\",\n         lambda r: f\"The parent company is\
+          \ {safe(r, 'PARENT_COMPANY')}.\" if normalize(r.get(\"PARENT_COMPANY\"))\
+          \ else strict_unknown_text),\n        (\"manufacturer\", [\"TITLE\", \"\
+          PRODUCT_CODE\", \"TRADEMARK\", \"MANUFACTURER\"],\n         lambda r: f\"\
+          Who is the manufacturer for {product_name(r)}?\",\n         lambda r: f\"\
+          The manufacturer is {safe(r, 'MANUFACTURER')}.\" if normalize(r.get(\"MANUFACTURER\"\
+          )) else strict_unknown_text),\n        (\"category\", [\"TITLE\", \"IRI_CATEGORY_NAME\"\
+          , \"IRI_SUB_CATEGORY_NAME\"],\n         lambda r: f\"What category is {product_name(r)}\
+          \ in?\",\n         lambda r: f\"It is in {safe(r, 'IRI_CATEGORY_NAME')}\
+          \ (sub-category: {safe(r, 'IRI_SUB_CATEGORY_NAME')}).\"\n              \
+          \     if normalize(r.get(\"IRI_CATEGORY_NAME\")) and normalize(r.get(\"\
+          IRI_SUB_CATEGORY_NAME\")) else strict_unknown_text),\n        (\"taxonomy\"\
+          , [\"TITLE\", \"TAXONOMY_CATEGORY_BLENDED\", \"TAXONOMY_SUB_CATEGORY_BLENDED\"\
+          ],\n         lambda r: f\"What taxonomy category does {product_name(r)}\
+          \ belong to?\",\n         lambda r: f\"Taxonomy category: {safe(r, 'TAXONOMY_CATEGORY_BLENDED')};\
+          \ taxonomy sub-category: {safe(r, 'TAXONOMY_SUB_CATEGORY_BLENDED')}.\"\n\
+          \                   if normalize(r.get(\"TAXONOMY_CATEGORY_BLENDED\")) and\
+          \ normalize(r.get(\"TAXONOMY_SUB_CATEGORY_BLENDED\")) else strict_unknown_text),\n\
+          \        (\"brand\", [\"TITLE\", \"FINANCE_BRAND_NAME\", \"SALES_BRAND_NAME\"\
+          ],\n         lambda r: f\"What are the finance and sales brands for {product_name(r)}?\"\
+          ,\n         lambda r: f\"Finance brand: {safe(r, 'FINANCE_BRAND_NAME')};\
+          \ Sales brand: {safe(r, 'SALES_BRAND_NAME')}.\"\n                   if normalize(r.get(\"\
+          FINANCE_BRAND_NAME\")) and normalize(r.get(\"SALES_BRAND_NAME\")) else strict_unknown_text),\n\
+          \        (\"flavor\", [\"TITLE\", \"STIBO_SUB_BRAND\", \"STIBO_FLAVOR\"\
+          , \"STIBO_SUGAR_TYPE\"],\n         lambda r: f\"What flavor is listed for\
+          \ {product_name(r)}?\",\n         lambda r: f\"The listed flavor is {safe(r,\
+          \ 'STIBO_FLAVOR')}.\" if normalize(r.get(\"STIBO_FLAVOR\")) else strict_unknown_text),\n\
+          \        (\"active\", [\"TITLE\", \"IS_ACTIVE_PRODUCT\"],\n         lambda\
+          \ r: f\"Is {product_name(r)} an active product?\",\n         lambda r: f\"\
+          {yes_no(r.get('IS_ACTIVE_PRODUCT'))}.\" if yes_no(r.get(\"IS_ACTIVE_PRODUCT\"\
+          )) else strict_unknown_text),\n        (\"variety\", [\"TITLE\", \"IS_VARIETY_PACK\"\
+          ],\n         lambda r: f\"Is {product_name(r)} a variety pack?\",\n    \
+          \     lambda r: f\"{yes_no(r.get('IS_VARIETY_PACK'))}.\" if yes_no(r.get(\"\
+          IS_VARIETY_PACK\")) else strict_unknown_text),\n        (\"flamin_hot\"\
+          , [\"TITLE\", \"IS_FLAMIN_HOT\"],\n         lambda r: f\"Is {product_name(r)}\
+          \ marked as Flamin Hot?\",\n         lambda r: f\"{yes_no(r.get('IS_FLAMIN_HOT'))}.\"\
+          \ if yes_no(r.get(\"IS_FLAMIN_HOT\")) else strict_unknown_text),\n    ]\n\
+          \n    base_examples = []\n    for row in rows:\n        src_code = (row.get(\"\
+          PRODUCT_CODE\") or \"\").strip()\n        for template_id, context_fields,\
+          \ qf, af in templates:\n            context = {k: (row.get(k, \"\").strip()\
+          \ if row.get(k) is not None else \"\") for k in context_fields}\n      \
+          \      base_examples.append(\n                {\n                    \"\
+          instruction\": qf(row),\n                    \"context\": context,\n   \
+          \                 \"answer\": af(row),\n                    \"meta_instruction\"\
+          : common_meta,\n                    \"meta\": {\"template_id\": template_id,\
+          \ \"source_product_code\": src_code},\n                }\n            )\n\
+          \n    rng = random.Random(seed)\n    if len(base_examples) >= target_rows:\n\
+          \        dataset = rng.sample(base_examples, target_rows)\n    else:\n \
+          \       dataset = [base_examples[rng.randrange(0, len(base_examples))] for\
+          \ _ in range(target_rows)]\n    rng.shuffle(dataset)\n\n    split_idx =\
+          \ int(len(dataset) * (1 - val_ratio))\n    train_rows = dataset[:split_idx]\n\
+          \    val_rows = dataset[split_idx:]\n\n    train_path = out_dir / \"finetune_train.jsonl\"\
+          \n    val_path = out_dir / \"finetune_val.jsonl\"\n    write_jsonl(out_dir\
+          \ / \"qa_base_all.jsonl\", base_examples)\n    write_jsonl(train_path, train_rows)\n\
+          \    write_jsonl(val_path, val_rows)\n\n    metadata = {\n        \"csv_rows\"\
+          : len(rows),\n        \"base_examples\": len(base_examples),\n        \"\
+          target_rows\": len(dataset),\n        \"train_rows\": len(train_rows),\n\
+          \        \"val_rows\": len(val_rows),\n        \"output_dir\": str(out_dir),\n\
+          \    }\n\n    Path(train_jsonl_out).write_text(str(train_path), encoding=\"\
+          utf-8\")\n    Path(val_jsonl_out).write_text(str(val_path), encoding=\"\
+          utf-8\")\n    Path(metadata_out).write_text(json.dumps(metadata), encoding=\"\
+          utf-8\")\n\n"
+        image: python:3.11
+        resources:
+          cpuLimit: 4.0
+          cpuRequest: 2.0
+          memoryLimit: 12.884901888
+          memoryRequest: 8.589934592
+          resourceCpuLimit: '4'
+          resourceCpuRequest: '2'
+          resourceMemoryLimit: 12Gi
+          resourceMemoryRequest: 8Gi
+    exec-register-model-version:
+      container:
+        args:
+        - --executor_input
+        - '{{$}}'
+        - --function_to_execute
+        - register_model_version
+        command:
+        - sh
+        - -c
+        - "\nif ! [ -x \"$(command -v pip)\" ]; then\n    python3 -m ensurepip ||\
+          \ python3 -m ensurepip --user || apt-get install python3-pip\nfi\n\nPIP_DISABLE_PIP_VERSION_CHECK=1\
+          \ python3 -m pip install --quiet --no-warn-script-location 'model-registry'\
+          \  &&  python3 -m pip install --quiet --no-warn-script-location 'kfp==2.14.6'\
+          \ '--no-deps' 'typing-extensions>=3.7.4,<5; python_version<\"3.9\"' && \"\
+          $0\" \"$@\"\n"
+        - sh
+        - -ec
+        - 'program_path=$(mktemp -d)
+
+
+          printf "%s" "$0" > "$program_path/ephemeral_component.py"
+
+          _KFP_RUNTIME=true python3 -m kfp.dsl.executor_main                         --component_module_path                         "$program_path/ephemeral_component.py"                         "$@"
+
+          '
+        - "\nimport kfp\nfrom kfp import dsl\nfrom kfp.dsl import *\nfrom typing import\
+          \ *\n\ndef register_model_version(\n    registry_server: str,\n    model_name:\
+          \ str,\n    model_version: str,\n    storage_uri: str,\n    model_id: str,\n\
+          \    description: str,\n    registration_out: dsl.OutputPath(str),\n):\n\
+          \    import inspect\n    import json\n    from pathlib import Path\n   \
+          \ from urllib.parse import urlparse\n\n    from model_registry import ModelRegistry\n\
+          \n    def adapt_call(fn, args, kwargs):\n        sig = inspect.signature(fn)\n\
+          \        bound_args = []\n\n        pos_only = [\n            p.name\n \
+          \           for p in sig.parameters.values()\n            if p.kind == inspect.Parameter.POSITIONAL_ONLY\
+          \ and p.name != \"self\"\n        ]\n        for i, n in enumerate(pos_only):\n\
+          \            if i < len(args):\n                bound_args.append(args[i])\n\
+          \            elif n in kwargs:\n                bound_args.append(kwargs[n])\n\
+          \n        filtered_kwargs = {\n            k: v\n            for k, v in\
+          \ kwargs.items()\n            if k in sig.parameters and k not in pos_only\
+          \ and k != \"self\"\n        }\n\n        return fn(*bound_args, **filtered_kwargs)\n\
+          \n    def get_attr_or_key(obj, *names):\n        if obj is None:\n     \
+          \       return None\n        if isinstance(obj, dict):\n            for\
+          \ n in names:\n                if n in obj and obj[n] is not None:\n   \
+          \                 return obj[n]\n            return None\n        for n\
+          \ in names:\n            v = getattr(obj, n, None)\n            if v is\
+          \ not None:\n                return v\n        return None\n\n    raw_server\
+          \ = (registry_server or \"\").strip()\n    if not raw_server:\n        raise\
+          \ ValueError(\"registry_server is empty\")\n\n    parsed = urlparse(raw_server\
+          \ if \"://\" in raw_server else f\"http://{raw_server}\")\n    host = parsed.hostname\n\
+          \    if not host:\n        raise ValueError(f\"Cannot parse host from registry_server='{raw_server}'\"\
+          )\n    port = parsed.port or 8080\n    scheme = parsed.scheme or \"http\"\
+          \n    is_secure = scheme == \"https\"\n    server_url = f\"{scheme}://{host}:{port}\"\
+          \n\n    init_sig = inspect.signature(ModelRegistry.__init__)\n\n    # SDK\
+          \ variants disagree on server_address semantics (URL vs host). Try URL form\
+          \ first.\n    ctor_candidates = [\n        {\n            \"server_address\"\
+          : server_url,\n            \"author\": \"mlops-pipeline\",\n           \
+          \ \"is_secure\": is_secure,\n        },\n        {\n            \"server_address\"\
+          : server_url,\n            \"port\": port,\n            \"author\": \"mlops-pipeline\"\
+          ,\n            \"is_secure\": is_secure,\n        },\n        {\n      \
+          \      \"server_address\": host,\n            \"port\": port,\n        \
+          \    \"author\": \"mlops-pipeline\",\n            \"is_secure\": is_secure,\n\
+          \        },\n    ]\n\n    registry = None\n    last_ctor_err = None\n  \
+          \  for candidate in ctor_candidates:\n        try:\n            init_kwargs\
+          \ = {k: v for k, v in candidate.items() if k in init_sig.parameters}\n \
+          \           registry = ModelRegistry(**init_kwargs)\n            break\n\
+          \        except Exception as e:\n            last_ctor_err = e\n\n    if\
+          \ registry is None:\n        raise RuntimeError(f\"Unable to initialize\
+          \ ModelRegistry client: {last_ctor_err}\")\n\n    existing_model = None\n\
+          \    existing_version = None\n\n    try:\n        existing_model = adapt_call(registry.get_registered_model,\
+          \ [model_name], {\"name\": model_name})\n    except Exception:\n       \
+          \ existing_model = None\n\n    try:\n        existing_version = adapt_call(\n\
+          \            registry.get_model_version,\n            [model_name, model_version],\n\
+          \            {\"name\": model_name, \"version\": model_version},\n     \
+          \   )\n    except Exception:\n        existing_version = None\n\n    created\
+          \ = False\n    if existing_version is None:\n        created = True\n  \
+          \      rm = adapt_call(\n            registry.register_model,\n        \
+          \    [model_name, storage_uri],\n            {\n                \"name\"\
+          : model_name,\n                \"uri\": storage_uri,\n                \"\
+          model_format_name\": \"huggingface\",\n                \"model_format_version\"\
+          : \"1\",\n                \"version\": model_version,\n                \"\
+          description\": description,\n                \"metadata\": {\"base_model_id\"\
+          : model_id, \"storage_uri\": storage_uri},\n            },\n        )\n\n\
+          \        try:\n            existing_model = adapt_call(registry.get_registered_model,\
+          \ [model_name], {\"name\": model_name})\n        except Exception:\n   \
+          \         if existing_model is None:\n                existing_model = rm\n\
+          \n        try:\n            existing_version = adapt_call(\n           \
+          \     registry.get_model_version,\n                [model_name, model_version],\n\
+          \                {\"name\": model_name, \"version\": model_version},\n \
+          \           )\n        except Exception:\n            if existing_version\
+          \ is None:\n                existing_version = rm\n\n    registered_model_id\
+          \ = get_attr_or_key(existing_model, \"id\", \"registered_model_id\")\n \
+          \   registered_version_id = get_attr_or_key(existing_version, \"id\", \"\
+          model_version_id\")\n\n    payload = {\n        \"registry_server\": raw_server,\n\
+          \        \"registry_host\": host,\n        \"registry_port\": port,\n  \
+          \      \"registry_url\": server_url,\n        \"registered_model_name\"\
+          : model_name,\n        \"registered_model_id\": registered_model_id,\n \
+          \       \"registered_version_name\": model_version,\n        \"registered_version_id\"\
+          : registered_version_id,\n        \"storage_uri\": storage_uri,\n      \
+          \  \"base_model_id\": model_id,\n        \"created\": created,\n    }\n\n\
+          \    print(\"MODEL_REGISTRY_RESULT=\" + json.dumps(payload, ensure_ascii=True))\n\
+          \    Path(registration_out).write_text(json.dumps(payload), encoding=\"\
+          utf-8\")\n\n    # Fail-fast: do not silently pass when registry did not\
+          \ actually persist objects.\n    if not registered_model_id:\n        raise\
+          \ RuntimeError(\"Model registry registration failed: registered_model_id\
+          \ missing\")\n    if not registered_version_id:\n        raise RuntimeError(\"\
+          Model registry registration failed: registered_version_id missing\")\n\n"
+        image: python:3.11
+        resources:
+          cpuLimit: 1.0
+          cpuRequest: 0.5
+          memoryLimit: 2.147483648
+          memoryRequest: 1.073741824
+          resourceCpuLimit: '1'
+          resourceCpuRequest: 500m
+          resourceMemoryLimit: 2Gi
+          resourceMemoryRequest: 1Gi
+pipelineInfo:
+  description: Generate instruction data, fine-tune Qwen LoRA on GPU, and deploy to
+    KServe endpoint.
+  name: qwen-csv-qa-train-and-serve-v2
+root:
+  dag:
+    tasks:
+      condition-1:
+        componentRef:
+          name: comp-condition-1
+        dependentTasks:
+        - register-model-version
+        inputs:
+          parameters:
+            pipelinechannel--deploy_enabled:
+              componentInputParameter: deploy_enabled
+            pipelinechannel--model_name:
+              componentInputParameter: model_name
+            pipelinechannel--model_version:
+              componentInputParameter: model_version
+            pipelinechannel--namespace:
+              componentInputParameter: namespace
+            pipelinechannel--pvc_name:
+              componentInputParameter: pvc_name
+        taskInfo:
+          name: condition-1
+        triggerPolicy:
+          condition: inputs.parameter_values['pipelinechannel--deploy_enabled'] ==
+            true
+      evaluate-dataset-only:
+        cachingOptions:
+          enableCache: true
+        componentRef:
+          name: comp-evaluate-dataset-only
+        dependentTasks:
+        - fine-tune-lora
+        - prepare-instruction-data
+        inputs:
+          parameters:
+            val_jsonl:
+              taskOutputParameter:
+                outputParameterKey: val_jsonl_out
+                producerTask: prepare-instruction-data
+        taskInfo:
+          name: evaluate-dataset-only
+      fine-tune-lora:
+        cachingOptions:
+          enableCache: true
+        componentRef:
+          name: comp-fine-tune-lora
+        dependentTasks:
+        - prepare-instruction-data
+        inputs:
+          parameters:
+            adapter_output_dir:
+              runtimeValue:
+                constant: /mnt/models/{{$.inputs.parameters['pipelinechannel--model_name']}}/{{$.inputs.parameters['pipelinechannel--model_version']}}/adapter/{{$.inputs.parameters['pipelinechannel--data_version']}}
+            batch_size:
+              componentInputParameter: batch_size
+            epochs:
+              componentInputParameter: epochs
+            grad_acc:
+              componentInputParameter: grad_acc
+            lr:
+              componentInputParameter: lr
+            max_seq_len:
+              componentInputParameter: max_seq_len
+            model_id:
+              componentInputParameter: model_id
+            pipelinechannel--data_version:
+              componentInputParameter: data_version
+            pipelinechannel--model_name:
+              componentInputParameter: model_name
+            pipelinechannel--model_version:
+              componentInputParameter: model_version
+            train_jsonl:
+              taskOutputParameter:
+                outputParameterKey: train_jsonl_out
+                producerTask: prepare-instruction-data
+            val_jsonl:
+              taskOutputParameter:
+                outputParameterKey: val_jsonl_out
+                producerTask: prepare-instruction-data
+        taskInfo:
+          name: fine-tune-lora
+      merge-for-serving:
+        cachingOptions:
+          enableCache: true
+        componentRef:
+          name: comp-merge-for-serving
+        dependentTasks:
+        - evaluate-dataset-only
+        inputs:
+          parameters:
+            adapter_dir:
+              runtimeValue:
+                constant: /mnt/models/{{$.inputs.parameters['pipelinechannel--model_name']}}/{{$.inputs.parameters['pipelinechannel--model_version']}}/adapter/{{$.inputs.parameters['pipelinechannel--data_version']}}/final
+            base_model_id:
+              componentInputParameter: model_id
+            merged_output_dir:
+              runtimeValue:
+                constant: /mnt/models/{{$.inputs.parameters['pipelinechannel--model_name']}}/{{$.inputs.parameters['pipelinechannel--model_version']}}/serving-model
+            pipelinechannel--data_version:
+              componentInputParameter: data_version
+            pipelinechannel--model_name:
+              componentInputParameter: model_name
+            pipelinechannel--model_version:
+              componentInputParameter: model_version
+        taskInfo:
+          name: merge-for-serving
+      prepare-instruction-data:
+        cachingOptions:
+          enableCache: true
+        componentRef:
+          name: comp-prepare-instruction-data
+        inputs:
+          parameters:
+            csv_path:
+              componentInputParameter: csv_path
+            output_dir:
+              runtimeValue:
+                constant: /mnt/models/{{$.inputs.parameters['pipelinechannel--model_name']}}/{{$.inputs.parameters['pipelinechannel--model_version']}}/data/{{$.inputs.parameters['pipelinechannel--data_version']}}
+            pipelinechannel--data_version:
+              componentInputParameter: data_version
+            pipelinechannel--model_name:
+              componentInputParameter: model_name
+            pipelinechannel--model_version:
+              componentInputParameter: model_version
+            seed:
+              componentInputParameter: seed
+            target_rows:
+              componentInputParameter: target_rows
+            val_ratio:
+              componentInputParameter: val_ratio
+        taskInfo:
+          name: prepare-instruction-data
+      register-model-version:
+        cachingOptions: {}
+        componentRef:
+          name: comp-register-model-version
+        dependentTasks:
+        - merge-for-serving
+        inputs:
+          parameters:
+            description:
+              runtimeValue:
+                constant: Qwen CSV QA LoRA model registered from KFP pipeline.
+            model_id:
+              componentInputParameter: model_id
+            model_name:
+              componentInputParameter: model_name
+            model_version:
+              componentInputParameter: model_version
+            pipelinechannel--model_name:
+              componentInputParameter: model_name
+            pipelinechannel--model_version:
+              componentInputParameter: model_version
+            pipelinechannel--pvc_name:
+              componentInputParameter: pvc_name
+            registry_server:
+              componentInputParameter: registry_server
+            storage_uri:
+              runtimeValue:
+                constant: pvc://{{$.inputs.parameters['pipelinechannel--pvc_name']}}/{{$.inputs.parameters['pipelinechannel--model_name']}}/{{$.inputs.parameters['pipelinechannel--model_version']}}/serving-model
+        taskInfo:
+          name: register-model-version
+  inputDefinitions:
+    parameters:
+      batch_size:
+        defaultValue: 1.0
+        isOptional: true
+        parameterType: NUMBER_INTEGER
+      csv_path:
+        defaultValue: /mnt/models/data/LimeSpark Phase2_2026-01-23-1416.csv
+        isOptional: true
+        parameterType: STRING
+      data_version:
+        defaultValue: d2026-02-13
+        isOptional: true
+        parameterType: STRING
+      deploy_enabled:
+        defaultValue: true
+        isOptional: true
+        parameterType: BOOLEAN
+      epochs:
+        defaultValue: 1.0
+        isOptional: true
+        parameterType: NUMBER_INTEGER
+      grad_acc:
+        defaultValue: 8.0
+        isOptional: true
+        parameterType: NUMBER_INTEGER
+      lr:
+        defaultValue: 0.0001
+        isOptional: true
+        parameterType: NUMBER_DOUBLE
+      max_seq_len:
+        defaultValue: 512.0
+        isOptional: true
+        parameterType: NUMBER_INTEGER
+      model_id:
+        defaultValue: Qwen/Qwen2.5-1.5B-Instruct
+        isOptional: true
+        parameterType: STRING
+      model_name:
+        defaultValue: qwen-csv-qa
+        isOptional: true
+        parameterType: STRING
+      model_version:
+        defaultValue: v1
+        isOptional: true
+        parameterType: STRING
+      namespace:
+        defaultValue: mlops
+        isOptional: true
+        parameterType: STRING
+      pvc_name:
+        defaultValue: model-store-pvc
+        isOptional: true
+        parameterType: STRING
+      registry_server:
+        defaultValue: http://model-registry-service.kubeflow.svc.cluster.local:8080
+        isOptional: true
+        parameterType: STRING
+      seed:
+        defaultValue: 42.0
+        isOptional: true
+        parameterType: NUMBER_INTEGER
+      target_rows:
+        defaultValue: 5000.0
+        isOptional: true
+        parameterType: NUMBER_INTEGER
+      val_ratio:
+        defaultValue: 0.1
+        isOptional: true
+        parameterType: NUMBER_DOUBLE
+schemaVersion: 2.1.0
+sdkVersion: kfp-2.14.6
+---
+platforms:
+  kubernetes:
+    deploymentSpec:
+      executors:
+        exec-evaluate-dataset-only:
+          pvcMount:
+          - componentInputParameter: pvc_name
+            mountPath: /mnt/models
+            pvcNameParameter:
+              componentInputParameter: pvc_name
+        exec-fine-tune-lora:
+          nodeSelector:
+            labels:
+              agentpool: gpuac3d
+              kubernetes.azure.com/accelerator: nvidia
+          pvcMount:
+          - componentInputParameter: pvc_name
+            mountPath: /mnt/models
+            pvcNameParameter:
+              componentInputParameter: pvc_name
+          secretAsEnv:
+          - keyToEnv:
+            - envVar: HF_TOKEN
+              secretKey: HF_TOKEN
+            optional: false
+            secretName: hf-token
+            secretNameParameter:
+              runtimeValue:
+                constant: hf-token
+          tolerations:
+          - effect: NoSchedule
+            key: type
+            operator: Equal
+            value: gpu
+        exec-merge-for-serving:
+          nodeSelector:
+            labels:
+              agentpool: gpuac3d
+              kubernetes.azure.com/accelerator: nvidia
+          pvcMount:
+          - componentInputParameter: pvc_name
+            mountPath: /mnt/models
+            pvcNameParameter:
+              componentInputParameter: pvc_name
+          secretAsEnv:
+          - keyToEnv:
+            - envVar: HF_TOKEN
+              secretKey: HF_TOKEN
+            optional: false
+            secretName: hf-token
+            secretNameParameter:
+              runtimeValue:
+                constant: hf-token
+          tolerations:
+          - effect: NoSchedule
+            key: type
+            operator: Equal
+            value: gpu
+        exec-prepare-instruction-data:
+          pvcMount:
+          - componentInputParameter: pvc_name
+            mountPath: /mnt/models
+            pvcNameParameter:
+              componentInputParameter: pvc_name
